@@ -1,0 +1,609 @@
+---
+title: "Predicting the Canadian Federal Election Popular Vote Using Logistic Regression Models and Post-Stratification"
+author: "Alexandre Haulard - (1006173604)"
+date: "Assignment 3: STA304 - 05/11/2021"
+output:
+  pdf_document: 
+      latex_engine: xelatex
+---
+
+```{r, include=FALSE, comment= ""}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = FALSE)
+library(tidyverse)
+library(ggiraphExtra)
+library(ggiraph)
+library(ggthemes)
+library(patchwork)
+library(stargazer)
+library(modelsummary)
+library(xtable)
+library(cesR)
+library(ggpubr)
+```
+
+\ 
+
+# Introduction
+
+## Motivation for the Analysis
+
+The goal of this analysis is to use statistical models in order to predict who will win the upcoming Canadian federal election popular vote. More specifically, logistic regression models will be used along with post-stratification in order to predict whether the Liberal or Conservative party will win the popular vote. This will be achieved using both data from a survey and a census. These data provide a wide set of information about Canadian voters. A few examples are age, income, religion, candidate preference, whether they were born in Canada, and many others. 
+
+This analysis is motivated by the recent 2021 Canadian Federal election which arrived earlier than expected. The early election was a surprise to many Canadians who were not familiar with the "Dissolution of Parliament" process. The governor general, following the advice of the prime minister, had to issue proclamations to begin dissolution (*1. Senate of Canada.*). 
+
+This analysis should be of interest to many Canadians who were closely following the recent election and expressed confusion about the dissolution of parliament. Some argue that this election was an attempt from Prime Minister Justin Trudeau to gain back majority in the House of Commons, which he lost in the 2019 federal election. Others argue that the election is an opportunity for Canadians to have a say during this challenging pandemic (*2. Austen, Ian.*).
+
+In any event, it would be interesting to create a model that predicts the popular vote for the tentatively 2025 election (or an early election that may occur). The analysis will attempt to answer the following research question: **_Can the Canadian Federal election popular vote be predicted using logistic regression models that depends on a set of variables such as age, education, sex, and income?_**
+
+## Terminology
+
+In order to understand the following analysis, let's define some niche political terms mentioned in this report.
+
+* **Liberal Party of Canada**: The Liberal Party of Canada is the longest-serving and oldest active federal political party in Canada. The party has dominated federal politics of Canada for much of its history, holding power for almost 70 years of the 20th century.
+
+* **Conservative Party of Canada**: The Conservative Party of Canada, colloquially known as the Tories, is a federal political party in Canada. It was formed in 2003 from the multiple right-leaning parties which had existed in Canada for over a century, historically grouped into two camps known as the "Red Tories" and the "Blue Tories". (*3. “List of Political Parties in Canada.”*)
+
+* **Popular Vote**: Popular vote, in an indirect election, is the total number of votes received in the first-phase election, as opposed to the votes cast by those elected to take part in the final election. 
+
+The notion of popular vote is important to keep in mind as Canada does not elect its Prime minister based on total votes. Canada elects its Prime Minister using a riding system. Each riding is an electoral district. The party who secures the most districts wins the election. 
+
+## Hypothesis
+
+Based on the census and the survey we are using; I hypothesize that our models will predict the conservative party will win the popular vote. This hypothesis is based on the most recent outcome of the Canadian federal election. The liberal party won the election as they obtained most seats, but the conservative had a higher share of total votes in Canada. There were 5,742,635 total votes for the conservative party against 5,556,835 for the liberal party (*4. “Federal Election 2021 Live Results.”*). 
+
+# Data
+
+## Collection Process
+
+There are two sets of data used for this analysis. Both data provide intersecting information about Canadian voters. In other words, these data sets both provide information about Canadian citizens such as age, religion preferences, sex, highest education level, or income. The subsection 'Post-Stratification' will explain why we made use of two data sets that have intersecting information. Let's describe how each data set was collected:
+
+* **Canadian Election Study, 2019, Phone Survey**: The 2019 Canadian Election Study was conducted to gather the attitudes and opinions of Canadians during and after the 2019 federal election (*5. “Welcome to the 2019 Canadian Election Study.”*). The sample comprised of 66% wireless telephone numbers and 34% land-line telephone numbers. During these phone calls, participants were surveyed about attributes that describes who they are as well as their views regarding political issues (Economy, Education, Employment...). In the following subsection, we will refer to this survey as CES.
+
+* **General Social Survey**: This census was made in the 2017 cycle. The data set was pulled from the CHASS Data Center (*6. “University of Toronto Libraries.”*). The General Social Survey program, established in 1985, conducts telephone surveys across the ten provinces. The GSS is recognized for its regular collection of cross-sectional data that allows for trend analysis, and its capacity to test and develop new concepts that address current or emerging issues. In the following subsection, we will refer to this survey as GSS.
+
+## Cleaning Process
+
+The cleaning process mostly consists of making both the CES and the GSS data match in variables type and value names. This is done in order for post-stratification (explained in 'Methods') to be performed correctly. 
+
+```{r, include = FALSE}
+census_data <- read_csv("gss_clean.csv")
+survey_data <- read_csv("ces2019-phone_clean.csv")
+```
+
+```{r}
+
+# data liberal
+
+clean_survey_lib <- survey_data %>% 
+  filter(!(q3 %in% c(-9, -8, -7, 3))) %>% 
+  mutate(sex = case_when(q3 == 1 ~ 'Male',
+                         q3 == 2 ~ 'Female')) %>% 
+  
+  filter(!(q61 %in% c(-9,-8,-7))) %>% 
+  mutate(education = case_when(q61 %in% 1:4 ~'less than high school',
+                               q61 == 5 ~ 'high school',
+                               q61 %in% 6:7 ~ 'trade or college',
+                               q61 == 8 ~ 'some university',
+                               q61 == 9 ~ 'bachelor', 
+                               q61 %in% 10:11 ~ 'above bachelor')) %>% 
+  
+  filter(!(q69 %in% c(-9, -8, -7))) %>% 
+  mutate(income_family = case_when(q69 %in% 0:24999 ~ 'Less than $25,000',
+                                        q69 %in% 25000:49999 ~ '$25,000 to $49,999',
+                                        q69 %in% 50000:74999 ~ '$50,000 to $74,999',
+                                        q69 %in% 75000:99999 ~ '$75,000 to $99,999',
+                                        q69 %in% 100000:124999 ~ '$100,000 to $ 124,999',
+                                        q69 >= 125000 ~ '$125,000 and more')) %>% 
+  
+  filter(!(q4 %in% c(-9, -8, -7, 11, 12, 13))) %>% 
+  mutate(province = case_when(q4 == 1 ~ 'Newfoundland and Labrador',
+                              q4 == 2 ~ 'Prince Edward Island',
+                              q4 == 3 ~ 'Nova Scotia',
+                              q4 == 4 ~ 'New Brunswick',
+                              q4 == 5 ~'Quebec',
+                              q4 == 6 ~ 'Ontario',
+                              q4 == 7 ~ 'Manitoba',
+                              q4 == 8 ~ 'Saskatchewan',
+                              q4 == 9 ~ 'Alberta',
+                              q4 == 10 ~ 'British Columbia')) %>%
+  
+  filter(!(q63 %in% c(-8, -7))) %>% 
+  drop_na(q63) %>% 
+  mutate(religion_importance = case_when(q63 == -9 ~ "Don't know",
+                                         q63 == 4 ~ "Not at all important",
+                                         q63 == 3 ~ "Not very important",
+                                         q63 == 2 ~ "Somewhat important",
+                                         q63 == 1 ~ "Very important")) %>% 
+  
+  
+  drop_na(q11) %>%
+  mutate(vote_liberal = ifelse(q11==1, 1, 0)) %>% 
+  
+  filter(!(q64 %in% c(-9, -8, -7))) %>% 
+  mutate(born_in_canada = ifelse(q64 %in% c(1,2), 'Yes', 'No')) %>% 
+  filter(!(p55 %in% c(-9, -8, -7))) %>% 
+  mutate(one_parent_born_outside_canada = case_when(p55 == 1 ~ 'Yes',
+                                                    p55 == 2 ~ 'No')) %>% 
+  drop_na(p55) %>% 
+  
+  select(province, sex, age, education, income_family, religion_importance, born_in_canada, one_parent_born_outside_canada, vote_liberal)
+
+```
+
+```{r}
+
+# data con
+
+clean_survey_con <- survey_data %>% 
+  filter(!(q3 %in% c(-9, -8, -7, 3))) %>% 
+  mutate(sex = case_when(q3 == 1 ~ 'Male',
+                         q3 == 2 ~ 'Female')) %>% 
+  
+  filter(!(q61 %in% c(-9,-8,-7))) %>% 
+  mutate(education = case_when(q61 %in% 1:4 ~'less than high school',
+                               q61 == 5 ~ 'high school',
+                               q61 %in% 6:7 ~ 'trade or college',
+                               q61 == 8 ~ 'some university',
+                               q61 == 9 ~ 'bachelor', 
+                               q61 %in% 10:11 ~ 'above bachelor')) %>% 
+  
+  filter(!(q69 %in% c(-9, -8, -7))) %>% 
+  mutate(income_family = case_when(q69 %in% 0:24999 ~ 'Less than $25,000',
+                                        q69 %in% 25000:49999 ~ '$25,000 to $49,999',
+                                        q69 %in% 50000:74999 ~ '$50,000 to $74,999',
+                                        q69 %in% 75000:99999 ~ '$75,000 to $99,999',
+                                        q69 %in% 100000:124999 ~ '$100,000 to $ 124,999',
+                                        q69 >= 125000 ~ '$125,000 and more')) %>% 
+  
+  filter(!(q4 %in% c(-9, -8, -7, 11, 12, 13))) %>% 
+  mutate(province = case_when(q4 == 1 ~ 'Newfoundland and Labrador',
+                              q4 == 2 ~ 'Prince Edward Island',
+                              q4 == 3 ~ 'Nova Scotia',
+                              q4 == 4 ~ 'New Brunswick',
+                              q4 == 5 ~'Quebec',
+                              q4 == 6 ~ 'Ontario',
+                              q4 == 7 ~ 'Manitoba',
+                              q4 == 8 ~ 'Saskatchewan',
+                              q4 == 9 ~ 'Alberta',
+                              q4 == 10 ~ 'British Columbia')) %>%
+  
+  filter(!(q63 %in% c(-8, -7))) %>% 
+  drop_na(q63) %>% 
+  mutate(religion_importance = case_when(q63 == -9 ~ "Don't know",
+                                         q63 == 4 ~ "Not at all important",
+                                         q63 == 3 ~ "Not very important",
+                                         q63 == 2 ~ "Somewhat important",
+                                         q63 == 1 ~ "Very important")) %>% 
+  
+  
+  drop_na(q11) %>%
+  mutate(vote_conservative = ifelse(q11==2, 1, 0)) %>% 
+  
+  filter(!(q64 %in% c(-9, -8, -7))) %>% 
+  mutate(born_in_canada = ifelse(q64 %in% c(1,2), 'Yes', 'No')) %>% 
+  filter(!(p55 %in% c(-9, -8, -7))) %>% 
+  mutate(one_parent_born_outside_canada = case_when(p55 == 1 ~ 'Yes',
+                                                    p55 == 2 ~ 'No')) %>% 
+  drop_na(p55) %>% 
+  
+  select(province, sex, age, education, income_family, religion_importance, born_in_canada, one_parent_born_outside_canada, vote_conservative)
+
+```
+
+```{r}
+# Census Data
+
+clean_census <- census_data %>% 
+  
+  mutate(age=round(age)) %>% 
+  filter(age >= 18) %>% 
+  mutate(education  = case_when(education == "Less than high school diploma or its equivalent" ~ 'less than high school',
+                                education == "High school diploma or a high school equivalency certificate" ~ 'high school',
+                                education %in% c('Trade certificate or diploma', 'College, CEGEP or other non-university certificate or di...') ~ 'trade or college',
+                                education == "University certificate or diploma below the bachelor's level" ~ 'some university',
+                                education == "Bachelor's degree (e.g. B.A., B.Sc., LL.B.)" ~ 'bachelor',
+                                education == "University certificate, diploma or degree above the bach..." ~ 'above bachelor')) %>% 
+  drop_na(education) %>%
+  filter(place_birth_father %in% c('Born outside Canada', 'Born in Canada')) %>% 
+  filter(place_birth_mother %in% c('Born outside Canada', 'Born in Canada')) %>% 
+  mutate(one_parent_born_outside_canada = ifelse((place_birth_father == 'Born outside Canada' |  place_birth_mother == 'Born outside Canada'), 'Yes', 'No')) %>% 
+  filter(place_birth_canada %in% c('Born in Canada', 'Born outside Canada')) %>% 
+  mutate(born_in_canada = case_when(place_birth_canada == 'Born in Canada' ~ "Yes",
+                                    place_birth_canada == 'Born outside Canada' ~ "No")) %>% 
+  rename(religion_importance = regilion_importance) %>% 
+  drop_na(religion_importance) %>% 
+  select(province, sex, age, education, income_family, religion_importance, born_in_canada, one_parent_born_outside_canada)
+```
+
+### CES Data Cleaning
+
+The variables we have used from the original CES data frame are 'q3', 'q4', 'q11, 'q61', 'q63', 'q69' 'p55'. These variables names provide little information. Therefore, all these variables were renamed to their equivalent English meaning using the data documentation. Most of them are demographic variables that will be used for our models. They were renamed as 'province', 'sex', 'age', 'education', 'family income', 'religion importance', 'born in Canada', and if 'one parent is born outside Canada'.
+
+Two logistic regression models will be used. One determines the share of conservative popular vote, and the other determines the share of liberal popular vote. This is done using the variable 'p55' which provides information about which party a voter will likely vote for. From this CES survey, we create two data frames for each model. 
+The first data frame contains all the demographic variables and 'p55' renamed as 'vote liberal' which is binary. A value of 1 means a citizen is likely to vote for the liberal party. A value of 0 means a citizen is not likely to vote for the liberal party which could be conservatives, NDP, Green, or any other Canadian party. 
+
+The second data frame contains the exact same demographic variables but uses 'p55' as a binary variable to know if a citizen is likely to vote for the conservative party. The variable is renamed as 'vote conservative'.  A value of 1 means a citizen is likely to vote for the conservative party. A value of 0 means a citizen is not likely to vote for the conservative party which could be liberal, NDP, Green, or any other Canadian party. 
+
+The variable 'family income' was continuous. We have made it categorical in bins of $25,000 which matches the 'family income' variable from the GSS data.
+
+Furthermore, all the demographic variables were converted from integers to strings. For example, a value of 7 means a person is from Manitoba in the original data. It is now 'Manitoba' in our cleaned data frames. The matching was done using the original study documentation. For most variables, missing values and values recorded as 'Don't Know' were removed. Only the variable 'religion importance has kept values recorded as "Don't know". 
+
+### GSS Data Cleaning
+
+The original census has 'age' recorded as a continuous variable with decimals. This variable was kept as continuous but rounded to integers such that it matches the CES data. Additionally, the variable 'education' was formatted such that it matches the CES. For example, "Bachelor's degree (e.g. B.A., B.Sc., LL.B.)"  was renamed as 'bachelor'.
+
+Finally, all observations with missing values were removed. 
+
+## Definition of variables 
+
+This subsection serves as reference for the definition of the variables that are used throughout the analysis, and within our logistic regression models.
+
+* **Province**: The variable contains the 10 Ontario provinces, but does not include the three territories. (*7. “Provinces and Territories of Canada.”*)
+* **Sex**: Contains the values 'Male' and 'Female'
+* **Age**: Provides the age of a voter.
+* **Education**: The variable provides the highest level of education of a voter. The self explanatory options are 'less than high school' degree, 'high school' degree, 'bachelor', and 'above bachelor'. The option 'trade or college' also includes participants who did not finish their college degree. The option 'some university' includes participants who did not finish their bachelor degree. 
+* **Income Family**: The sum of incomes earned by each member of a household.
+* **Religion Importance**: Participants were asked the following question: In your life, would you say religion is VERY important, somewhat important, not very important, not important at all? "Don't know" was also an option that is included in our cleaned data frame.
+* **Born in Canada**: Records whether a participant was born in Canada.
+* **One parent born outside Canada**: Records whether at least one parent is born outside of Canada. 
+* **Vote Liberal**: A binary variable that records whether a person is likely to vote for the liberal party.
+* **Vote Conservative** A binary variable that records whether a person is likely to vote for the conservative party.  
+
+## Numerical Variable Summary
+
+The only continuous variable for which we can calculate summary statistics is 'age'.
+
+```{r, results = "asis", comment= ""}
+options(xtable.comment = FALSE)
+
+ss <- clean_survey_lib %>% summarise(Min = min(age), Mean = mean(age), Median = median(age), 'Standard Deviation' = sd(age), Max = max(age), n = n())
+sc <- clean_census %>% summarise(Min = min(age), Mean = mean(age), Median = median(age), 'Standard Deviation' = sd(age), Max = max(age), n = n())
+tx <- as.data.frame(union(ss, sc) %>% mutate(Data = case_when(n == length(clean_survey_lib$age) ~ 'CES',
+                                                              n == length(clean_census$age) ~ 'GSS')) %>% select(Data, Min, Mean, Median, `Standard Deviation`, Max, n))
+
+print(xtable(tx, caption = "Mean Summary of Age for Data Types"), caption.placement = 'top',include.rownames=FALSE)
+```
+
+The CES data, which is our survey, contains 1415 observations. The census data contains 19357 observations. Theoretically, it is not a true census. Nevertheless, the GSS data can be reasonably considered a census for our purposes. 
+
+The min age is 18 which means all the participants were adults. This makes sense as Canadian citizens must be at least 18 years of age in order to vote. The max age is 95 for the survey data, but 80 for the census data. A census should cover the whole population, so we imagine that the max age of the census should be higher than 80. We can conclude that in the GSS data collection process, the population was defined such that participants cannot be older than 80.  
+
+The mean and standard deviation of the CES survey are quite close to the "true" population mean for age defined by the GSS census. Thus, the survey is representative of the population mean for age. 
+
+Finally, the standard deviation given by the survey is 15.46 while the population standard deviation is 17.24. Let's use histograms to visualize the distribution of age. 
+
+\ 
+
+```{r, fig.height= 3}
+aces <- clean_survey_lib %>% ggplot(aes(x = age)) +
+  geom_histogram(bins = 25, colour = 'white', fill = '#69b3a2', alpha=0.8) +
+  theme_bw() + 
+  labs(title = 'CES Survey', x = "Age", y = "Count")
+
+aggs <- clean_census %>% ggplot(aes(x = age)) +
+  geom_histogram(bins = 20, colour = '404080', fill = '#404080', alpha=0.8) +
+  theme_bw() + 
+  labs(title = 'GSS Census', x = "Age", y = "Count")
+
+library(patchwork)
+aces + aggs + plot_annotation(title = 'Figure 1: Distribution of Age for the Survey and Census')
+```
+
+The data looks more normally distributed for the CES survey. The data in the CES survey is more concentrated around its mean. On the other side, the data from the census appears to be more spread out. This makes sense as the standard deviation from the census was larger. 
+
+## Categorical Variables Summary
+
+Let's use a frequency chart to visualize the education level conditional on the 10 Canadian provinces from the CES survey. 
+
+\ 
+
+```{r,fig.height=5}
+barchart <- clean_survey_lib %>% filter(born_in_canada == 'No') %>% ggplot(aes(province)) + 
+  theme_bw()+ 
+  scale_x_discrete(labels=c('AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'ON', 'PE', 'QC', 'SK')) +
+  geom_bar(aes(fill=education), width = 0.7) +
+  theme(axis.text.x = element_text(angle=0, vjust=0.6)) +
+  labs(title = "Figure 2: Frequency of Education Level by Province" , x = "Province", y = "Count")
+
+barchart
+```
+
+\ 
+
+Notice that Ontario has the highest bar which makes sense as it is the province with the highest population. The predominant highest level of education is a bachelor degree in all provinces except in Manitoba, New Brunswick and Newfoundland and Labrador. 
+
+The proportion of people with an education level beyond a bachelor degree is quite high in New Brunswick. 
+
+Alberta has the highest amount of observation with an education level that is less than high school. Interestingly, there are no observation with a high school diploma in Alberta. This is unfeasible and can hint that the survey is not representative of the true population in terms of the education variable. 
+
+Let's use a balloon plot to visualize the frequency of 3 of the categorical variables at the same time. These variables are 'family income', 'education level', and 'sex'. 
+
+```{r}
+# Use this to create some plots. Should probably describe both the sample and population.
+bule <- clean_survey_lib %>% group_by(income_family, education, sex) %>% 
+  summarise(Frequency = n())
+  
+bulechart <- ggballoonplot(bule, x = 'education', y = 'income_family', size = 'Frequency', fill = 'Frequency', facet.by = 'sex', ggthem =theme_bw()) + 
+  scale_fill_viridis_c(option = "C") + 
+  guides(size = "none") +
+  theme(axis.text.x = element_text(angle=35, vjust=1)) +
+  labs(title = 'Figure 3: Balloon Plot for Salary Vs. Education Level given Sex')
+bulechart
+```
+
+The plot has quite a lot of information. The vertical axis displays household income. The horizontal axis provides the education level. The left chart are observations conditional on being a female while the right chart are observations conditional on being a male. The size and color of each circle changes as the frequency for a certain observation increases. For example, there are more than 75 occurrences of males with a bachelor degree making \$125,000 or more. Another example is females making \$125,000 or more with an education level above a bachelor degree. The circle is red. This means there are between 50 to 75 occurrences for this example.
+
+Finally, let's talk about the mean of the binary variables 'vote liberal' and 'vote conservative'. 'Vote liberal' has a mean of `r round(mean(clean_survey_lib$vote_liberal), 3)` while 'vote conservative' has a mean of `r round(mean(clean_survey_con$vote_conservative), 3)`. These numbers represent the proportion of participant who said they were likely to vote for a certain party on the survey.
+
+In the next section, the logistic regression model will be introduced along with the post-stratification technique. Two models will be computed with the dependent variables 'vote liberal' and 'vote conservative'. Both models will have the exact same independent variables: 'sex', 'family income', 'education level', 'religion importance', 'born in Canada', and 'one parent born outside Canada'.  
+
+# Methods
+
+This section introduces the logistic regression model for a general science reader. We will later compute the model in the results section. Additionally, the post-stratification method will be explained. This technique is key as it will allow us to make a final conclusion about whether the conservative or liberal party will win the popular vote.
+
+## Logistic Regression
+
+Before introducing logistic regression, let's note that we are not using a linear regression model as it is not appropriate to model a binary response variable.
+
+The logistic regression model is a binary classification model in which the conditional probability of one of the two possible realizations of the output variable is assumed to be equal to a linear combination of the input variables, transformed by the logistic function (*8. Taboga, Marco. “Logistic Regression by Marco Taboga.”*).
+
+Some example of using logistic regression are: determining if an email is spam or not, identifying if a patient's tumor is malignant or benign (*9. "Introduction to Logistic Regression, Samantha-Jo Caetano"*). In our case, the model is perfect to determine binary outcomes such as whether a person will vote for a certain political party or not. 
+
+The general model is defined as follows: $log(\frac{p}{1-p}) = \beta_0 + \beta_1x_1 + \beta_2x_2 + ... + \beta_kx_k$ where each $x_i$ can be a continuous, categorical, and/or dummy variable. Each parameter which we aim to estimate represent change in log odds. The regression coefficients are usually estimated using maximum likelihood estimation. This is quite statistically rigorous and will not be defined here (*10. “Maximum Likelihood Estimation.”*). Nevertheless, the R programming language will handle these computations for us without having to worry about hefty theory. Let's define the independent variables used for the two logistic regression models.
+
+>$d_1 =$ Is Male  
+$x_2 =$ Age
+
+> $d_3 =$ Education: Bachelor  
+$d_4 =$ Education: High School  
+$d_5 =$ Education: Below High School  
+$d_6 =$ Education: Some University  
+$d_7 =$ Education: Trade or College
+
+If all these variables are equal to 0, then we are estimating the outcome for an observation with an education level that is above a Bachelor degree.
+
+> $d_8 =$ Family Income: \$125,000 and more   
+$d_9 =$ Family Income: \$25,000 to \$49,999   
+$d_{10} =$ Family Income: \$50,000 to \$74,999  
+$d_{11} =$ Family Income: \$75,000 to \$99,999  
+$d_{12} =$ Family Income: Less than \$25,000
+
+If all these variables are equal to 0, then we are estimating the outcome for an observation with a family income that is between \$100,000 and \$124,999.
+
+> $d_{13} =$ Religion Importance: Not at all important  
+$d_{14} =$ Religion Importance: Not very important  
+$d_{15} =$ Religion Importance: Somewhat important  
+$d_{16} =$ Religion Importance: Very important
+
+If all these variable are equal to 0, then we are estimating the outcome for an observation who "Doesn't Know" (as recorded in the survey) whether religion is important or not.  
+
+> $d_{17} =$ Is Born in Canada  
+$d_{18} =$ Has one parent born outside Canada
+
+Note that there is only one continuous variable which is 'age' defined as $x_2$. All other variables are dummy variables that takes on the value 1 or 0. 
+
+* **Logistic Regression for determining if a person will vote for the liberal party**
+
+$$\begin{aligned}
+log(\frac{p_{lib}}{1-p_{lib}}) = \beta_0 &+ \beta_1d_1 + \beta_2x_2 \\
+&+ \beta_3d_3 + \beta_4d_4 + \beta_5d_5 + \beta_6d_6 + \beta_7d_7\\
+&+ \beta_8d_8 + \beta_9d_9 + \beta_{10}d_{10} + \beta_{11}d_{11} + \beta_{12}d_{12}\\
+&+ \beta_{13}d_{13} + \beta_{14}d_{14} + \beta_{15}d_{15} + \beta_{16}d_{16}\\
+&+ \beta_{17}d_{17} + \beta_{18}d_{18}
+\end{aligned}$$
+
+* **Logistic Regression for determining if a person will vote for the conservative party**
+
+$$\begin{aligned}
+log(\frac{p_{con}}{1-p_{con}}) = \beta_0 &+ \beta_1d_1 + \beta_2x_2 \\
+&+ \beta_3d_3 + \beta_4d_4 + \beta_5d_5 + \beta_6d_6 + \beta_7d_7\\
+&+ \beta_8d_8 + \beta_9d_9 + \beta_{10}d_{10} + \beta_{11}d_{11} + \beta_{12}d_{12}\\
+&+ \beta_{13}d_{13} + \beta_{14}d_{14} + \beta_{15}d_{15} + \beta_{16}d_{16}\\
+&+ \beta_{17}d_{17} + \beta_{18}d_{18}
+\end{aligned}$$
+
+Again, these models are the same in regards to the independent variables. But, they differ only with the binary response. The first model estimates the log odds that a person will vote for the liberal party. The second model estimates the log odds that a person will vote for the conservative party.
+
+Holding everything else constant, the interpretation of $\beta_2$ is as follows: for every 1 year increase in age we expect the log odds to increase by $\beta_2$. An example of the interpretation of parameters of binary variables is as follows: given an observation whose highest education level is a bachelor degree, we expect the log odds to increase by $d_3$. Same reasoning applies to all the other dummy variables.
+
+In the results section we will find estimates $\hat{\beta_0}, \hat{\beta_1},...,\hat{\beta_{17}}$ for each of the parameters. 
+
+After computing these parameters, we will assess whether some variables are necessary in our model. If we find variables that have no statistical significance in explaining the response, these variables will be dropped. The assessment will be made using the following selection techniques: 
+
+* **t-test**: This is is an hypothesis test. The null hypothesis is formulated as follows: $H_0: \beta_i = 0$. If we can reject $H_0$, it means that the $i$ predictor is significantly related to the response. If the null cannot be rejected, then we can make a second model without this parameter and check if the new model is more efficient using an AIC or BIC test. A 5% significance level will be used. If most categories in a variable set are statistically insignificant, we will remove the whole variable set.  
+
+* **AIC**: The equation of this test is as follows; $AIC = 2k-2\ln(\hat{L})$. The number of predictors is $k$, so more predictors increases the value of AIC. $\hat{L}$ is the maximum value of the likelihood function. Therefore, if our model fits well, the second term of AIC would be higher. This means AIC would be lower. Thus, when comparing models, we are looking for the one with the lowest AIC (*11. “Akaike Information Criterion.”*). 
+
+* **BIC**: The equation of this test is as follows; $BIC = k\ln(n)-2\ln(\hat{L})$. The intuition behind this formula is the same as described above for AIC. A lower BIC is preferred (*12. “Bayesian Information Criterion.”*).  
+
+## Post-Stratification 
+
+Post-stratification is a statistical technique used for correcting model estimates for known differences between a sample and a population. The technique involves using data from, for example, censuses relating to various types of people corresponding to different characteristics such as age, race, or education level (*13. “STA304", Multilevel Regression & Poststratification*). 
+
+The model is mathematically defined as follows: $\hat{y}^{PS} = \frac{\sum{N_j\hat{y_j}}}{\sum{N_j}}$. We can then compare $\hat{y}^{PS}$ for both the liberal and conservative models to determine who will win the popular vote. 
+
+In order to estimate the proportion of voters, we can finally use the census data to apply post-stratification. It is appropriate to use post-stratification as the data from the CES survey is not properly balanced. We have determined in the data section that certain variables in the survey are not representative of the true population. 
+
+The census data contains all variables that were used in our model that is computed using the survey data. This will allow us to first compute estimates of probabilities from our models. The second step is to create bins by grouping estimates. These bins will be implemented using provinces because it is likely to influence voter outcome. Therefore, there will be 10 bins as there are 10 provinces. 
+
+The results of $\hat{y}^{PS}$ for both models will be computed and compared in the results section. The highest $\hat{y}^{PS}$ will determine which party wins the popular vote assuming other parties cannot do better.
+
+# Results
+
+This section is divided into two subsection. One for displaying the logistic regression models results. The second one for deciding who will win the popular vote using the post-stratification results. 
+
+## Logistic Regression Models 
+
+Let's compute the estimate of parameters for both models. We will then check the statistical significance of these parameters. If necessary, a second version of each model without statistically insignificant parameters will be created. Post-stratification will be performed with the models that have the lower AIC and BIC. The table of estimates is found on the next page. 
+
+Before interpreting the parameters, let's analyze their statistical significance. As said in the methods section, a set of variables which does not have at least one category with a statistical significance of 5% will be removed. This is the case for 'Family Income' and 'Religion Importance'. T-tests shows that these variables give poor justification for the response as opposed to other predictors. Age is statistically insignificant in the conservative model but not the liberal one. Age will not be dropped in the conservative model so that both model can stay similar in predictors. We now have a second version of both models. Both the AIC and BIC are lower in the second version of the liberal model. Therefore, the Liberal V2 model is better than the previous model and will be used for interpretation and post-stratification. The V2 Model for conservatives has lower BIC than the previous one but a higher AIC. In that case, we could argue that both models are almost as efficient. Therefore, we will use the Conservative V2 model for post stratification in order to be consistent with the Liberal V2 model.  
+
+The 'is male' estimate is negative for liberal and positive for conservative. The interpretation is that given a male, log odds of voting for liberal decreases by 0.212. Given a male, log odds of voting for conservative increases by 0.697. There is a positive relationship regarding age in the liberal model, but none in the conservative model. Given a person with an education level 'trade or college', logs odds of voting for liberal decreases by -0.909, but increases by 0.609 for conservative. Same logic applies for the interpretation of other education levels. Given a person is born in Canada, the log odds of voting for liberal decreases by 0.734, while it increases by 0.134 for conservative. Note that the parameter estimate of this variable has a high statistical significance in the liberal model, but none in the conservative model. 
+
+
+```{r}
+# Models
+
+mylogit_lib1 <- glm(formula = vote_liberal ~ sex + age + education + income_family + religion_importance + born_in_canada + one_parent_born_outside_canada, family = "binomial", data = clean_survey_lib)
+mylogit_con1 <- glm(formula = vote_conservative ~ sex + age + education + income_family + religion_importance + born_in_canada + one_parent_born_outside_canada, family = "binomial", data = clean_survey_con)
+
+mylogit_lib2 <- glm(formula = vote_liberal ~ sex + age + education + born_in_canada, family = "binomial", data = clean_survey_lib)
+mylogit_con2 <- glm(formula = vote_conservative ~ sex + age + education + born_in_canada , family = "binomial", data = clean_survey_con)
+```
+
+
+\newgeometry{top=0.4cm,left=0.5cm,right=0.5cm}
+
+
+```{r}
+models <- list('Liberal' = mylogit_lib1, 
+               'Conservative' = mylogit_con1,
+               'Liberal V2' = mylogit_lib2,
+               'Conservative V2' = mylogit_con2)
+gm <- list(
+  list("raw" = "nobs", "clean" = "N", "fmt" = 0),
+  list("raw" = "AIC", "clean" = "AIC", "fmt" = 1),
+  list("raw" = "BIC", "clean" = "BIC", "fmt" = 1))
+
+m <- modelsummary(models, title = "Estimation of Logistic Regression Models' parameters for Liberals and Conservatives", stars = TRUE, gof_map = gm,
+                  coef_rename = c("sexMale" = "Is Male",
+                                  "age" = "Age",
+                                  "educationbachelor" = "Education: Bachelor",
+                                  "educationhigh school" = "Education: High School",
+                                  "educationless than high school" = "Education: Below High School",
+                                  "educationsome university" = "Education: Some University",
+                                  "educationtrade or college" = "Education: Trade or College",
+                                  "income_family$125,000 and more" = "Family Income: $125,000 and more",
+                                  "income_family$25,000 to $49,999" = "Family Income: $25,000 to $49,999",
+                                  "income_family$50,000 to $74,999" = "Family Income: $50,000 to $74,999",
+                                  "income_family$75,000 to $99,999" = "Family Income: $75,000 to $99,999",
+                                  "income_familyLess than $25,000" = "Family Income: Less than $25,000",
+                                  "religion_importanceNot at all important" = "Religion Importance: Not at all important",
+                                  "religion_importanceNot very important" = "Religion Importance: Not very important",
+                                  "religion_importanceSomewhat important" = "Religion Importance: Somewhat important",
+                                  "religion_importanceVery important" = "Religion Importance: Very important",
+                                  "born_in_canadaYes" = "Is Born in Canada",
+                                  "one_parent_born_outside_canadaYes" = " Has one parent born outside Canada"))
+m
+```
+
+
+\restoregeometry 
+
+
+## Post-Stratification Results
+
+First, let's compute a table with the bins for which we will perform post-stratification. 
+
+```{r, results = "asis", comment= ""}
+options(xtable.comment = FALSE)
+# post-stratification 
+clean_census$liberal_predict_prob <- mylogit_lib2 %>% 
+  predict(newdata = clean_census, type = 'response')
+
+clean_census$conservative_predict_prob <- mylogit_con2 %>% 
+  predict(newdata = clean_census, type = 'response')
+
+temp_group <- clean_census %>%  group_by(province)
+#seats <- data.frame(num_seats = c(34, 42, 14, 10, 7, 11, 121, 4, 78, 14), province = l$province)
+
+
+l <- summarise(temp_group, prob_vote_lib_group_mean = mean(liberal_predict_prob), n = n())
+c <- summarise(temp_group, prob_vote_con_group_mean = mean(conservative_predict_prob), n = n())
+
+y_ps_lib <- sum(l$prob_vote_lib_group_mean * l$n) / sum(l$n)
+y_ps_con <- sum(c$prob_vote_con_group_mean * c$n) / sum(c$n)
+
+
+print(xtable(merge(l,c) %>% rename("Probability of Voting Liberal" = prob_vote_lib_group_mean, 
+                                   "Probablility of Voting Conservative" = prob_vote_con_group_mean,
+                                   "Province" = province), 
+             caption = "Cell/Bin splits use for Post-Stratification"), 
+      caption.placement = 'top',
+      include.rownames=FALSE)
+
+#y_ps_lib 
+#y_ps_con	
+```
+
+The variable 'n' represents the number of observations in each province. Analyzing results about voting for a certain party, we see that the probability of voting for liberals is highest in Ontario at 28%. It stands at 29% for conservatives. This means we expect 57% of Ontarians to vote for the two major parties. The rest is expected to vote for other parties (E.g. NDP, Bloc Québécois, ...). Newfoundland and Labrador has the lowest probability of voting for the liberal party at 22%, but the highest for conservative at 31%. In every province, the overall probability of voting for conservative is higher than the probability of voting for liberals. From here, we can already infer that conservatives will win the popular vote without performing post-stratification, but let's still compute it for the sake of completion. Note that the 'n' from the table is the equivalent of $N_j$ in our post-stratification equation. 
+
+
+_**Probability that a person votes for the liberal party of Canada:**_
+
+$$\hat{y}^{PS_{lib}} = \frac{\sum{N_j\hat{y_j}^{lib}}}{\sum{N_j}} = `r round(y_ps_lib,6) * 100` \%$$ 
+
+_**Probability that a person votes for the conservative party of Canada:**_
+
+$$\hat{y}^{PS_{con}} = \frac{\sum{N_j\hat{y_j}^{con}}}{\sum{N_j}} = `r round(y_ps_con, 6) *100` \%$$
+Since $\hat{y}^{PS_{lib}} < \hat{y}^{PS_{con}}$, we can conclude that conservatives will win the popular vote in the next federal election. According to our model and post-stratification results, $`r round(y_ps_con, 6) *100` \%$ of voters will choose the conservative party and $`r round(y_ps_lib, 6) *100` \%$ will choose the liberal party. To make that conclusion, we assumed that liberals and conservative cannot be beat by other parties (E.g. NDP, Bloc Québécois, ...) in terms of popular vote.
+
+Comparing to past elections, our results seem reasonable but not ideal. During the 2021 election, conservative won the popular vote at 33.7% with liberals just behind at 32.6% (*14. Tahirali, Jesse, and Phil Hahn.*). The $\hat{y}^{PS_{lib}} = `r round(y_ps_lib, 6) *100` \%$ is quite far from 32.6% which is why I would not conclude our model is ideal. Nevertheless, it is reasonable since it rightly predicts conservatives would win the popular vote. 
+
+\newpage
+
+# Conclusions
+
+In the introduction section, we asked the following research question: _**Can the Canadian Federal election popular vote be predicted using logistic regression models that depends on a set of variables such as age, education, sex, and income?**_ To answer this question, I would re-iterate the interpretation of the results section. Our model is not ideal to estimate the exact proportion of popular vote for each party, but does a fairly good job at predicting the outcome for who wins the popular vote. To arrive at this conclusion, logistic regression models were used in addition to the post-stratification technique. 
+
+The hypothesis we made earlier has guessed the right outcome of the study. Nevertheless, the results don't provide support that is convincing enough since the proportion estimate of liberal voters greatly differs from the one in the closest election. The key results were that the proportion of conservative voters was higher than the proportion of liberal voters. 
+
+Talking about the big picture, predicting the outcome of an election is complicated even when using appropriate statistical methods. There are too many unknowns that change voter opinion. The obvious and most recent unknown is the COVID-19 pandemic. This event which started in March 2020 can greatly change the opinions of voters. 
+
+## Weaknesses
+
+The first weakness of our study is that the CES survey was made in 2019, and the GSS census in 2017. The pandemic most likely changed the political views of many voters. The second weakness is sampling biases present in the CES survey. There is most likely a selection bias due to the fact it was conducted by phone. Additionally, it is very likely that the survey contains response biases. Many participants could have inaccurately answered questions asking about their salary, religion, or any other information that they find sensitive to report. The third weakness concerns the choice of predictors in our model. It is quite hard to guess which independent variable provides the best explanation to our response. Intuitive ones we have used are income and education, but family size, spouse's age, spouse's education, parents' occupation, and/or many other unforeseeable predictors might explain the response.
+
+## Next Steps and Discussion
+
+Future work would involve correcting the above mentioned weaknesses. Conducting a more recent survey with less biases is a first step. Testing different models and/or different predictors is another option. 
+
+Finally, to summarize this report, despite some weaknesses we have shown using logistic regression and post-stratification that conservatives would win the popular vote in an upcoming election. 
+
+\newpage
+
+_All analysis for this report was programmed using `R version 4.1.1`._
+
+# Bibliography
+
+## In Line Referencing
+
+1. Senate of Canada. “What Is Dissolution of Parliament?” Senate of Canada, [https://sencanada.ca/en/sencaplus/how-why/what-is-dissolution-of-parliament/.](https://sencanada.ca/en/sencaplus/how-why/what-is-dissolution-of-parliament/.) (Last Accessed: November 4, 2021)
+
+2. Austen, Ian. “Why Did Justin Trudeau Call for an Early Election?” The New York Times, The New York Times, 20 Sept. 2021, [https://www.nytimes.com/2021/09/20/world/canada/justin-trudeau-why-early-election.html.](https://www.nytimes.com/2021/09/20/world/canada/justin-trudeau-why-early-election.html.) (Last Accessed: November 4, 2021)
+
+3. “List of Political Parties in Canada.” Wikipedia, Wikimedia Foundation, 27 Aug. 2021, [https://en.wikipedia.org/wiki/List_of_political_parties_in_Canada.](https://en.wikipedia.org/wiki/List_of_political_parties_in_Canada.) (Last Accessed: November 4, 2021)
+
+4. “Federal Election 2021 Live Results.” CBCnews, CBC/Radio Canada, [https://newsinteractives.cbc.ca/elections/federal/2021/results/.](https://newsinteractives.cbc.ca/elections/federal/2021/results/.) (Last Accessed: November 4, 2021)
+
+5. “Welcome to the 2019 Canadian Election Study.” Canadian Election Study, [http://www.ces-eec.ca/.](http://www.ces-eec.ca/.) (Last Accessed: November 4, 2021)
+
+6. “University of Toronto Libraries.” My.access - University of Toronto Libraries, [https://sda-artsci-utoronto-ca.myaccess.library.utoronto.ca/sdaweb/dli2/gss/gss31/gss31/more_doc/index.htm.](https://sda-artsci-utoronto-ca.myaccess.library.utoronto.ca/sdaweb/dli2/gss/gss31/gss31/more_doc/index.htm.) (Last Accessed: November 4, 2021)
+
+7. “Provinces and Territories of Canada.” Wikipedia, Wikimedia Foundation, 26 Oct. 2021, [https://en.wikipedia.org/wiki/Provinces_and_territories_of_Canada.](https://en.wikipedia.org/wiki/Provinces_and_territories_of_Canada.) (Last Accessed: November 4, 2021)
+
+8. Taboga, Marco. “Logistic Regression by Marco Taboga.” Logistic Classification Model (Logit or Logistic Regression), [https://www.statlect.com/fundamentals-of-statistics/logistic-classification-model.](https://www.statlect.com/fundamentals-of-statistics/logistic-classification-model.) (Last Accessed: November 4, 2021)  
+
+9. "Introduction to Logistic Regression, Samantha-Jo Caetano", STA304 (Last Accessed: November 4, 2021) 
+
+10. “Maximum Likelihood Estimation.” Wikipedia, Wikimedia Foundation, 21 Oct. 2021, [https://en.wikipedia.org/wiki/Maximum_likelihood_estimation.](https://en.wikipedia.org/wiki/Maximum_likelihood_estimation.) (Last Accessed: November 4, 2021) 
+
+11. “Akaike Information Criterion.” Wikipedia, Wikimedia Foundation, 21 Oct. 2021, [https://en.wikipedia.org/wiki/Akaike_information_criterion.](https://en.wikipedia.org/wiki/Akaike_information_criterion.) (Last Accessed: November 4, 2021)
+
+12. “Bayesian Information Criterion.” Wikipedia, Wikimedia Foundation, 5 Nov. 2021, [https://en.wikipedia.org/wiki/Bayesian_information_criterion.](https://en.wikipedia.org/wiki/Bayesian_information_criterion.) (Last Accessed: November 4, 2021)
+
+13. “STA304", Multilevel Regression & Poststratification (Last Accessed: November 4, 2021)  
+
+14. Tahirali, Jesse, and Phil Hahn. “Six Charts to Help You Understand the 2021 Federal Election.” CTVNews, CTV News, 27 Sept. 2021, [https://www.ctvnews.ca/politics/federal-election-2021/six-charts-to-help-you-understand-the-2021-federal-election-1.5598419.](https://www.ctvnews.ca/politics/federal-election-2021/six-charts-to-help-you-understand-the-2021-federal-election-1.5598419.) (Last Accessed: November 4, 2021)
+
+## Software Packages Used to Complete this Report
+
+1. Wickham et al., (2019). Welcome to the tidyverse. Journal of Open Source Software, 4(43), 1686, [https://doi.org/10.21105/joss.01686](https://doi.org/10.21105/joss.01686)
+
+2. Hlavac, Marek (2018). stargazer: Well-Formatted Regression and Summary Statistics Tables. R package version 5.2.1. [https://CRAN.R-project.org/package=stargazer](https://CRAN.R-project.org/package=stargazer) 
+
+
+3. Vincent Arel-Bundock (2021). modelsummary: Summary Tables and Plots for Statistical Models and Data: Beautiful, Customizable, and Publication-Ready. R package version 0.9.2. [https://CRAN.R-project.org/package=modelsummary](https://CRAN.R-project.org/package=modelsummary)
+
+4. David B. Dahl, David Scott, Charles Roosen, Arni Magnusson and Jonathan Swinton (2019). xtable: Export Tables to LaTeX or HTML. R
+  package version 1.8-4. [https://CRAN.R-project.org/package=xtable](https://CRAN.R-project.org/package=xtable)
